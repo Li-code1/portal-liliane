@@ -1,0 +1,17 @@
+name: Lembrete de sessão (1h antes)
+
+# Roda automaticamente a cada 15 minutos, o dia inteiro, e também pode
+# ser disparado manualmente pela aba "Actions" do GitHub, se quiser testar.
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  chamar-lembrete:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Chamar a função de lembrete no site
+        run: |
+          curl -sf "${{ secrets.SITE_URL }}/api/send-reminders?secret=${{ secrets.REMINDER_SECRET }}" \
+            || (echo "Falha ao chamar o endpoint de lembrete" && exit 1)
