@@ -249,7 +249,7 @@ npm run dev
 
 ## Limitações desta versão
 
-Desenvolvido por Liliane Lima 
+Desenvolvido por Liliane Lima. 
 
 - O lembrete de 1h antes depende do GitHub Actions estar ativo no
   repositório — se o repositório ficar muito tempo sem nenhum commit,
