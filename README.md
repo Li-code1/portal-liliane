@@ -247,7 +247,7 @@ npm run dev
 ```
 (Envio de e-mail e lembretes só funcionam no ambiente publicado na Vercel.)
 
-## Limitações desta versão
+## Limitações desta versão.
 
 Desenvolvido por Liliane Lima. 
 
