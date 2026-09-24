@@ -90,11 +90,26 @@ select id, data_hora, duracao_minutos, tipo
 from public.available_slots
 where status = 'disponivel' and data_hora > now();
 
+-- security_invoker = on: a view passa a rodar com as permissões de quem
+-- está consultando (anon/authenticated), respeitando a política de RLS
+-- logo abaixo — em vez de rodar com as permissões elevadas de quem criou
+-- a view (comportamento padrão do Postgres, que o Security Advisor do
+-- Supabase sinaliza como "Security Definer View").
+alter view public.available_slots_public set (security_invoker = on);
+
 alter table public.available_slots enable row level security;
 
--- Ninguém acessa a tabela real diretamente (nem para leitura) — o público
--- usa a view acima, e a reserva é feita só pela função serverless
--- /api/book-slot (que usa a service_role key, sem passar pelo RLS).
+-- O público (sem login) só enxerga, via RLS, as linhas com horário
+-- disponível e futuro — exatamente os mesmos dados que a view já
+-- mostrava antes. A reserva em si continua sendo feita só pela função
+-- serverless /api/book-slot (que usa a service_role key, sem passar
+-- pelo RLS), então ninguém consegue reservar direto pelo banco.
+drop policy if exists "publico_ve_horarios_disponiveis" on public.available_slots;
+create policy "publico_ve_horarios_disponiveis" on public.available_slots
+  for select
+  to anon, authenticated
+  using (status = 'disponivel' and data_hora > now());
+
 drop policy if exists "admin_ve_tudo_slots" on public.available_slots;
 create policy "admin_ve_tudo_slots" on public.available_slots
   for select using (public.is_admin());
@@ -103,7 +118,11 @@ drop policy if exists "admin_gerencia_slots" on public.available_slots;
 create policy "admin_gerencia_slots" on public.available_slots
   for all using (public.is_admin()) with check (public.is_admin());
 
+grant select on public.available_slots to anon, authenticated;
 grant select on public.available_slots_public to anon, authenticated;
+
+-- =====================================================================
+-- Trigger: quando você cria um novo usuário no Supabase Auth
 -- (você cria pelo painel do Supabase, aba Authentication > Users > Add user),
 -- um perfil correspondente é criado automaticamente aqui.
 -- =====================================================================
@@ -114,7 +133,7 @@ begin
   values (new.id, new.email, coalesce(new.raw_user_meta_data->>'full_name', new.email));
   return new;
 end;
-$$ language plpgsql security definer;
+$$ language plpgsql security definer set search_path = public;
 
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
@@ -126,8 +145,8 @@ create trigger on_auth_user_created
 -- =====================================================================
 create or replace function public.is_admin()
 returns boolean as $$
-  select coalesce((select is_admin from public.profiles where id = auth.uid()), false);
-$$ language sql security definer stable;
+  select coalesce((select is_admin from public.profiles where id = (select auth.uid())), false);
+$$ language sql security definer stable set search_path = public;
 
 -- =====================================================================
 -- Função segura para o CLIENTE enviar feedback de uma sessão.
@@ -150,7 +169,7 @@ begin
       feedback_anonimo = p_anonimo
   where id = p_session_id and client_id = auth.uid();
 end;
-$$ language plpgsql security definer;
+$$ language plpgsql security definer set search_path = public;
 
 -- =====================================================================
 -- Função segura para o CLIENTE aceitar os termos de privacidade.
@@ -164,7 +183,7 @@ begin
   set consentimento_lgpd = true, consentimento_em = now()
   where id = auth.uid();
 end;
-$$ language plpgsql security definer;
+$$ language plpgsql security definer set search_path = public;
 
 -- =====================================================================
 -- Segurança (Row Level Security): cada cliente só vê os próprios dados;
@@ -177,7 +196,7 @@ alter table public.sessions enable row level security;
 
 drop policy if exists "ver_proprio_perfil" on public.profiles;
 create policy "ver_proprio_perfil" on public.profiles
-  for select using (id = auth.uid() or public.is_admin());
+  for select using (id = (select auth.uid()) or public.is_admin());
 
 drop policy if exists "admin_atualiza_perfis" on public.profiles;
 create policy "admin_atualiza_perfis" on public.profiles
@@ -185,11 +204,11 @@ create policy "admin_atualiza_perfis" on public.profiles
 
 drop policy if exists "ver_proprias_metas" on public.goals;
 create policy "ver_proprias_metas" on public.goals
-  for select using (client_id = auth.uid() or public.is_admin());
+  for select using (client_id = (select auth.uid()) or public.is_admin());
 
 drop policy if exists "cliente_atualiza_status_propria_meta" on public.goals;
 create policy "cliente_atualiza_status_propria_meta" on public.goals
-  for update using (client_id = auth.uid() or public.is_admin());
+  for update using (client_id = (select auth.uid()) or public.is_admin());
 
 drop policy if exists "admin_insere_metas" on public.goals;
 create policy "admin_insere_metas" on public.goals
@@ -201,7 +220,7 @@ create policy "admin_apaga_metas" on public.goals
 
 drop policy if exists "ver_proprias_ferramentas" on public.tools;
 create policy "ver_proprias_ferramentas" on public.tools
-  for select using (client_id = auth.uid() or public.is_admin());
+  for select using (client_id = (select auth.uid()) or public.is_admin());
 
 drop policy if exists "admin_insere_ferramentas" on public.tools;
 create policy "admin_insere_ferramentas" on public.tools
@@ -213,7 +232,7 @@ create policy "admin_apaga_ferramentas" on public.tools
 
 drop policy if exists "ver_proprias_sessoes" on public.sessions;
 create policy "ver_proprias_sessoes" on public.sessions
-  for select using (client_id = auth.uid() or public.is_admin());
+  for select using (client_id = (select auth.uid()) or public.is_admin());
 
 drop policy if exists "admin_insere_sessoes" on public.sessions;
 create policy "admin_insere_sessoes" on public.sessions
